@@ -1,43 +1,40 @@
-# MarketSense Chat Module
+# MarketSense Chat
 
-The chat module handles conversational interfaces and communication workflows for the MarketSense platform.
+A workshop environment for an event-driven chat interface.
 
-## Overview
+## Core Concepts
 
-This module provides:
-- Conversational AI interfaces
-- Chat workflow management
-- Communication routing and processing
-- Message handling and context management
+- **Everything is an Event**: Chat messages, file uploads, and external webhooks (Email, SMS, Notion) are all unified into a single event stream.
+- **Event-Driven UI**: The chat thread renders different event types (user/agent messages, system notifications) based on a consistent event schema.
+- **Real-time Ingestion**: External systems can push data via webhooks which appear instantly in the chat.
 
-## Architecture
+## Tech Stack
 
-The chat module is designed to be modular and extensible, supporting various chat interfaces and communication protocols.
+- **Frontend**: Vite + React + Tailwind CSS
+- **Backend**: Node.js + Express (API Key Auth + Event Store)
+- **Streaming**: Server-Sent Events (SSE)
 
 ## Getting Started
 
-```bash
-# Install dependencies
-npm install
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
 
-# Start development server
-npm run dev
+2. **Start the environment**:
+   ```bash
+   API_KEY=dev-api-key npm run dev
+   ```
 
-# Run tests
-npm test
-```
+3. **Open the interface**:
+   Go to [http://localhost:5173](http://localhost:5173) (or the port Vite provides)
 
-## Project Structure
+## Usage
 
-```
-src/
-├── interfaces/     # Chat interface definitions
-├── workflows/      # Communication workflow logic
-├── handlers/       # Message and event handlers
-├── config/         # Configuration files
-└── utils/          # Utility functions
-```
+- **Chat**: Type in the input field to send `chat.user` events.
+- **Simulation**: Use the sidebar to trigger mock webhooks and agent responses.
+- **Authentication**: Enter the `API_KEY` in the sidebar to authorize the event stream.
 
-## Contributing
+## Architecture
 
-Please follow the established coding standards and ensure all tests pass before submitting pull requests.
+See [docs/event-driven-architecture.md](docs/event-driven-architecture.md) for a detailed breakdown of the event patterns and schema.
