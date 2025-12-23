@@ -38,17 +38,6 @@ export class Workflow {
   }
 }
 
-/**
- * Base Node class following Graphite's Node layer
- */
-export abstract class GraphiteNode {
-  constructor(
-    protected workflow: Workflow,
-    public name: string
-  ) {}
-
-  abstract setup(): void;
-}
-
 export const globalWorkflow = new Workflow();
+
 

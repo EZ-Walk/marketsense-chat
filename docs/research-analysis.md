@@ -2,151 +2,82 @@
 
 ## Executive Summary
 
-The chat module should leverage modern TypeScript-first frameworks with streaming capabilities, type-safe message handling, and production-ready UI components. The Vercel AI SDK emerges as the industry standard for 2025, offering end-to-end type safety and React Server Components integration.
+The MarketSense chat module is built as an event-driven agentic system. While initial research considered various frameworks like Vercel AI SDK, the final architecture leverages the **Graphite Agentic Framework** (for architectural patterns) and **LangGraph.js** (for orchestration). This combination provides superior observability, auditability, and control over complex multi-step workflows compared to standard chat libraries.
 
-## Recommended Technology Stack
+## Chosen Technology Stack
 
-### 🚀 Primary Framework: Vercel AI SDK v5
-**Why:** End-to-end type safety, React Server Components, streaming responses, and production-ready patterns.
+### 🚀 Orchestration: LangGraph.js + Graphite Framework
+**Why:** Graphite provides a clear separation between Assistants, Nodes, and Tools, while LangGraph offers a robust state machine for managing node transitions.
 
-- **Documentation**: https://ai-sdk.dev/docs/introduction
-- **GitHub**: https://github.com/vercel/ai
+- **LangGraph**: [github.com/langchain-ai/langgraphjs](https://github.com/langchain-ai/langgraphjs)
+- **Graphite (Design Pattern)**: [github.com/binome-dev/graphite](https://github.com/binome-dev/graphite)
 - **Key Features**: 
-  - Custom message types with full TypeScript support
-  - Streaming UI with React Server Components
-  - Multi-framework support (React, Vue, Svelte, Angular)
-  - Provider-agnostic (OpenAI, Anthropic, Cohere, etc.)
+  - **Unified Event Stream**: Every internal decision is an observable event.
+  - **Stateful Persistence**: Durable execution of long-running workflows.
+  - **Lane Graph Architecture**: Dynamic routing between conversational and tool-based lanes.
 
-### 🎨 UI Components: AI Elements (shadcn/ui for AI)
-**Why:** Code ownership, TypeScript-first, customizable components following shadcn/ui philosophy.
+### 🧠 Model: Claude Haiku 4.5
+**Why:** Optimized for speed and cost-effectiveness in high-frequency conversational workflows, while maintaining high reasoning capabilities for tool selection.
 
-- **Documentation**: https://www.shadcn.io/ai
-- **Key Features**:
-  - Copy-paste React components for AI chat
-  - Role-based styling, interactive buttons, tooltips
-  - Built on Tailwind CSS with full TypeScript support
-  - No vendor lock-in - components become your code
-
-### ⚡ Alternative: assistant-ui
-**Why:** TypeScript/React library specifically designed for AI chat interfaces.
-
-- **GitHub**: https://github.com/assistant-ui/assistant-ui
-- **Use Case**: When you need a more opinionated, batteries-included chat framework
+### 🎨 UI Components: Custom Event-Driven React
+**Why:** Since "Everything is an Event," the UI must be able to render a wide variety of event types (User messages, Agent thoughts, Tool results, System notifications) from a single stream.
 
 ## Architecture Patterns
 
-### Message Management
-```typescript
-// Custom message types with metadata
-interface CustomUIMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: Date;
-  metadata?: {
-    modelId?: string;
-    tokenCount?: number;
-    sessionId?: string;
-  };
-}
+### Graphite Event Envelope
+Every interaction is wrapped in a standard envelope to ensure full auditability:
 
-// Type-safe chat hook
-const { messages, input, handleInputChange, handleSubmit } = 
-  useChat<CustomUIMessage>({
-    api: '/api/chat',
-    onFinish: async (message) => {
-      // Persist messages with full type safety
-      await saveMessage(message);
-    }
-  });
+```typescript
+export interface EventEnvelope<T extends EventType, P = any> {
+  id: string;
+  type: T;
+  createdAt: number;
+  actor: string;
+  source: string;
+  context: {
+    conversationId: string;
+    assistantRequestId: string;
+    invokeId: string;
+    userId: string;
+  };
+  payload: P;
+}
 ```
 
-### Streaming Best Practices
-- Use streaming to send chunks of response data as they become available
-- Implement real-time UI updates with smooth typewriter effects
-- Handle backpressure and error recovery gracefully
+### Lane Graph Pattern
+The system implements a "Lane Graph" where the `RouterNode` analyzes user intent to branch the workflow:
+- **Chat Lane**: Direct conversational responses via LLM.
+- **Tool Lane**: Execution of specialized tasks (e.g., search, data extraction).
 
-### Multi-Framework Extensibility
-- Flexible transports (swap default fetch-based transport)
-- Decoupled state management (integrate with Zustand, Redux, MobX)
-- Framework-agnostic chat hooks for any framework
+## Implementation Progress
 
-## Enterprise Considerations
+### Phase 1: Core Orchestration (Completed)
+- [x] Integrate LangGraph.js with Graphite architectural layers.
+- [x] Implement `RouterNode`, `LLMNode`, and `ToolNode`.
+- [x] Configure Anthropic Claude Haiku 4.5.
+- [x] Unified event emission for all node transitions.
 
-### LangChain Integration (Optional)
-For complex workflows requiring RAG, tools, and multi-agent orchestration:
-
-- **LangChain**: https://python.langchain.com/docs/how_to/chat_streaming/
-- **LangGraph**: For stateful workflows and human-in-the-loop
-- **Key Features**: Durable execution, streaming, observability via LangSmith
-
-### Production Deployment
-- Type safety across entire application stack
-- Message persistence with onFinish callbacks
-- Metadata handling for analytics and debugging
-- Error boundaries and fallback UI states
-
-## Implementation Roadmap
-
-### Phase 1: Core Chat Interface
-1. Set up Vercel AI SDK with TypeScript
-2. Implement basic chat UI with AI Elements
-3. Configure streaming responses
-4. Add message persistence
-
-### Phase 2: Advanced Features
-1. Custom message types with metadata
-2. Multi-modal support (text, images, files)
-3. Tool calling integration
-4. Session management
-
-### Phase 3: Enterprise Features
-1. LangChain integration for complex workflows
-2. Analytics and observability
-3. Multi-tenant support
-4. Rate limiting and usage tracking
+### Phase 2: Production Readiness (In Progress)
+- [ ] Implement durable state persistence using LangGraph Checkpointers.
+- [ ] Add human-in-the-loop (HITL) nodes for sensitive tool actions.
+- [ ] Expand tool suite for deeper MarketSense data integration.
 
 ## Key Dependencies
 
 ```json
 {
   "dependencies": {
-    "ai": "^5.0.0",
-    "@ai-sdk/openai": "^0.0.0",
-    "@ai-sdk/anthropic": "^0.0.0",
-    "react": "^18.0.0",
-    "next": "^14.0.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/react": "^18.0.0"
+    "@langchain/langgraph": "^latest",
+    "@langchain/anthropic": "^latest",
+    "@langchain/core": "^latest",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
   }
 }
 ```
 
 ## Resources & References
 
-### Documentation
-- [AI SDK Introduction](https://ai-sdk.dev/docs/introduction)
-- [Vercel AI Templates](https://vercel.com/templates/ai)
-- [Chat SDK Blog Post](https://vercel.com/blog/introducing-chat-sdk)
-
-### Examples & Templates
-- [Multi-modal Chatbot Template](https://vercel.com/templates/next.js/multi-modal-chatbot)
-- [Cohere + Next.js Guide](https://vercel.com/kb/guide/cohere-nextjs-vercel-ai-sdk)
-- [Building Chatbox UI Tutorial](https://juniarto-samsudin.medium.com/building-chatbox-ui-on-next-js-using-vercel-ai-sdk-part-1-86cec0889bf4)
-
-### Alternative Solutions
-- [Chat UI Kit React](https://github.com/chatscope/chat-ui-kit-react) - Open source UI toolkit
-- [Syncfusion React Chat UI](https://www.syncfusion.com/react-components/react-chat-ui) - Enterprise solution
-- [Botonic Framework](https://github.com/topics/conversational-ui) - Multi-platform conversational apps
-
-## Market Trends 2025
-
-1. **Type Safety First**: Full TypeScript support across entire chat application stack
-2. **Streaming by Default**: Real-time response streaming for better UX
-3. **Component Ownership**: Copy-paste components vs. black-box libraries
-4. **Multi-Framework**: Same API across React, Vue, Svelte, Angular
-5. **AI-Native**: Built specifically for AI chat, not adapted from general messaging
-
-The chat module should prioritize developer experience, type safety, and production scalability while maintaining flexibility for future enhancements.
+- [Graphite Agentic Framework GitHub](https://github.com/binome-dev/graphite)
+- [LangGraph.js Documentation](https://langchain-ai.github.io/langgraphjs/)
+- [Anthropic API Reference](https://docs.anthropic.com/claude/reference/)

@@ -1,17 +1,155 @@
-import { globalWorkflow, GraphiteNode } from './workflow';
-import { AnyEvent, EventEnvelope, createInvokeContext } from './types';
+import { Annotation, StateGraph, START, END } from "@langchain/langgraph";
+import { BaseMessage, AIMessage, HumanMessage } from "@langchain/core/messages";
+import { ChatAnthropic } from "@langchain/anthropic";
 import { v4 as uuid } from 'uuid';
-import Anthropic from '@anthropic-ai/sdk';
+import { globalWorkflow } from './workflow';
+import { EventEnvelope, AnyEvent, createInvokeContext } from './types';
+
+// Define the State
+export const GraphState = Annotation.Root({
+  messages: Annotation<BaseMessage[]>({
+    reducer: (x, y) => x.concat(y),
+    default: () => [],
+  }),
+  userId: Annotation<string>,
+  conversationId: Annotation<string>,
+  anthropicKey: Annotation<string | undefined>,
+});
 
 /**
- * ChatAssistant handles high-level orchestration
+ * Helper to emit events to the legacy workflow for UI observability
  */
-export class ChatAssistant extends GraphiteNode {
-  setup() {}
+function emitToLegacyWorkflow(event: AnyEvent, topic: string) {
+  globalWorkflow.getTopic(topic).publish(event);
+}
 
+/**
+ * Router Node - The "Lane Graph" implementation in LangGraph
+ */
+const routerNode = async (state: typeof GraphState.State) => {
+  const lastMessage = state.messages[state.messages.length - 1];
+  const text = lastMessage.content.toString().toLowerCase();
+
+  const logEvent: AnyEvent = {
+    id: uuid(),
+    type: 'node.input',
+    createdAt: Date.now(),
+    actor: 'RouterNode',
+    source: 'langgraph',
+    context: createInvokeContext(state.userId, state.conversationId),
+    payload: { message: `Router analyzing input: "${text}"` }
+  };
+  emitToLegacyWorkflow(logEvent, 'node_logs');
+
+  if (text.includes('search')) {
+    return "tools";
+  } else {
+    return "llm";
+  }
+};
+
+/**
+ * LLM Node - Processes text using ChatAnthropic
+ */
+const llmNode = async (state: typeof GraphState.State) => {
+  const key = state.anthropicKey || process.env.ANTHROPIC_API_KEY;
+  const context = createInvokeContext(state.userId, state.conversationId);
+  
+  if (!key) {
+    const errorEvent: AnyEvent = {
+      id: uuid(),
+      type: 'chat.agent',
+      createdAt: Date.now(),
+      actor: 'system',
+      source: 'error-handler',
+      context,
+      payload: { text: "Anthropic API Key missing. Set it in the sidebar.", agentId: 'system' },
+    };
+    emitToLegacyWorkflow(errorEvent, 'assistant_output');
+    return { messages: [new AIMessage("Error: API Key missing")] };
+  }
+
+  const llm = new ChatAnthropic({
+    apiKey: key,
+    modelName: "claude-haiku-4-5",
+    maxTokens: 1024,
+  });
+
+  const response = await llm.invoke(state.messages);
+
+  const outputEvent: EventEnvelope<'chat.agent'> = {
+    id: uuid(),
+    type: 'chat.agent',
+    createdAt: Date.now(),
+    actor: 'claude-haiku-4.5',
+    source: 'anthropic-api',
+    context,
+    payload: { text: response.content.toString(), agentId: 'graphite-claude' },
+  };
+  emitToLegacyWorkflow(outputEvent, 'assistant_output');
+
+  return { messages: [response] };
+};
+
+/**
+ * Tool Node - Mocking external search tool
+ */
+const toolNode = async (state: typeof GraphState.State) => {
+  const lastMessage = state.messages[state.messages.length - 1];
+  const text = lastMessage.content.toString();
+  const context = createInvokeContext(state.userId, state.conversationId);
+
+  const logEvent: AnyEvent = {
+    id: uuid(),
+    type: 'node.input',
+    createdAt: Date.now(),
+    actor: 'ToolNode',
+    source: 'langgraph',
+    context,
+    payload: { message: "ToolNode: Mocking external search tool..." }
+  };
+  emitToLegacyWorkflow(logEvent, 'node_logs');
+
+  await new Promise(r => setTimeout(r, 1500)); // Simulate work
+
+  const mockSearchResult = `Found 3 results for "${text}" in the MarketSense database. The most relevant result is a recent analysis on Graphite architecture.`;
+
+  const outputEvent: EventEnvelope<'chat.agent'> = {
+    id: uuid(),
+    type: 'chat.agent',
+    createdAt: Date.now(),
+    actor: 'search-tool',
+    source: 'internal-db',
+    context,
+    payload: { text: mockSearchResult, agentId: 'tool-executor' },
+  };
+  emitToLegacyWorkflow(outputEvent, 'assistant_output');
+
+  return { messages: [new AIMessage(mockSearchResult)] };
+};
+
+// Build the Graph
+const workflow = new StateGraph(GraphState)
+  .addNode("llm", llmNode)
+  .addNode("tools", toolNode)
+  .addConditionalEdges(START, routerNode, {
+    llm: "llm",
+    tools: "tools",
+  })
+  .addEdge("llm", END)
+  .addEdge("tools", END);
+
+export const graph = workflow.compile();
+
+/**
+ * ChatAssistant handles high-level orchestration (Compatibility Wrapper)
+ */
+export class ChatAssistant {
   async handleUserMessage(userId: string, text: string, conversationId?: string, anthropicKey?: string) {
     const context = createInvokeContext(userId, conversationId);
-    const event: EventEnvelope<'chat.user'> = {
+    
+    // 1. Emit the user message event for UI observability
+    const userEvent: EventEnvelope<'chat.user'> = {
       id: uuid(),
       type: 'chat.user',
       createdAt: Date.now(),
@@ -20,146 +158,18 @@ export class ChatAssistant extends GraphiteNode {
       context,
       payload: { text },
     };
+    globalWorkflow.getTopic('user_input').publish(userEvent);
 
-    // Store the key in the context for this invoke if provided
-    (event as any).anthropicKey = anthropicKey;
+    // 2. Invoke the LangGraph
+    await graph.invoke({
+      messages: [new HumanMessage(text)],
+      userId,
+      conversationId: context.conversationId,
+      anthropicKey,
+    });
 
-    this.workflow.getTopic('user_input').publish(event);
-    return event;
+    return userEvent;
   }
 }
 
-/**
- * RouterNode - The "Lane Graph" implementation.
- */
-export class RouterNode extends GraphiteNode {
-  setup() {
-    this.workflow.getTopic<EventEnvelope<'chat.user'>>('user_input').subscribe(async (event) => {
-      this.log(event, `Router analyzing input: "${event.payload.text}"`);
-
-      if (event.payload.text.toLowerCase().includes('search')) {
-        this.log(event, "Routing to: TOOL LANE");
-        this.workflow.getTopic('tool_input').publish(event);
-      } else {
-        this.log(event, "Routing to: CHAT LANE");
-        this.workflow.getTopic('chat_lane').publish(event);
-      }
-    });
-  }
-
-  private log(event: AnyEvent, message: string) {
-    this.workflow.getTopic('node_logs').publish({
-      ...event,
-      id: uuid(),
-      type: 'node.input',
-      payload: { message }
-    });
-  }
-}
-
-/**
- * LLMNode processes text using real Anthropic API
- */
-export class LLMNode extends GraphiteNode {
-  setup() {
-    this.workflow.getTopic<EventEnvelope<'chat.user'>>('chat_lane').subscribe(async (event) => {
-      this.log(event, "LLMNode: Generating response via Anthropic...");
-
-      try {
-        const key = (event as any).anthropicKey || process.env.ANTHROPIC_API_KEY;
-        if (!key) {
-          throw new Error("Anthropic API Key missing. Set it in the sidebar.");
-        }
-
-        const anthropic = new Anthropic({ apiKey: key });
-
-        const msg = await anthropic.messages.create({
-          model: "claude-3-5-sonnet-20240620",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: event.payload.text }],
-        });
-
-        const responseText = msg.content[0].type === 'text' ? msg.content[0].text : "Received non-text response";
-
-        const outputEvent: EventEnvelope<'chat.agent'> = {
-          id: uuid(),
-          type: 'chat.agent',
-          createdAt: Date.now(),
-          actor: 'claude-3.5',
-          source: 'anthropic-api',
-          context: event.context,
-          payload: { text: responseText, agentId: 'graphite-claude' },
-        };
-
-        this.workflow.getTopic('assistant_output').publish(outputEvent);
-      } catch (err: any) {
-        this.log(event, `Error: ${err.message}`);
-        this.workflow.getTopic('assistant_output').publish({
-          id: uuid(),
-          type: 'chat.agent',
-          createdAt: Date.now(),
-          actor: 'system',
-          source: 'error-handler',
-          context: event.context,
-          payload: { text: `Error: ${err.message}`, agentId: 'system' },
-        });
-      }
-    });
-  }
-
-  private log(event: AnyEvent, message: string) {
-    this.workflow.getTopic('node_logs').publish({
-      ...event,
-      id: uuid(),
-      type: 'node.input',
-      payload: { message }
-    });
-  }
-}
-
-/**
- * ToolNode - Handles external function calls
- */
-export class ToolNode extends GraphiteNode {
-  setup() {
-    this.workflow.getTopic<EventEnvelope<'chat.user'>>('tool_input').subscribe(async (event) => {
-      this.log(event, "ToolNode: Mocking external search tool...");
-      
-      await new Promise(r => setTimeout(r, 1500)); // Simulate work
-
-      const mockSearchResult = `Found 3 results for "${event.payload.text}" in the MarketSense database. The most relevant result is a recent analysis on Graphite architecture.`;
-
-      const outputEvent: EventEnvelope<'chat.agent'> = {
-        id: uuid(),
-        type: 'chat.agent',
-        createdAt: Date.now(),
-        actor: 'search-tool',
-        source: 'internal-db',
-        context: event.context,
-        payload: { text: mockSearchResult, agentId: 'tool-executor' },
-      };
-
-      this.workflow.getTopic('assistant_output').publish(outputEvent);
-    });
-  }
-
-  private log(event: AnyEvent, message: string) {
-    this.workflow.getTopic('node_logs').publish({
-      ...event,
-      id: uuid(),
-      type: 'node.input',
-      payload: { message }
-    });
-  }
-}
-
-// Initialize the system
-export const assistant = new ChatAssistant(globalWorkflow, 'MainAssistant');
-export const routerNode = new RouterNode(globalWorkflow, 'RouterNode');
-export const llmNode = new LLMNode(globalWorkflow, 'LLMNode');
-export const toolNode = new ToolNode(globalWorkflow, 'ToolNode');
-
-assistant.setup();
-routerNode.setup();
-llmNode.setup();
-toolNode.setup();
+export const assistant = new ChatAssistant();
