@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # Open Claw AI Assistant Service
+  openclaw:
+    image: ghcr.io/phioranex/openclaw-docker:latest
+    container_name: marketsense-openclaw
+    ports:
+      - "18789:18789"  # Open Claw Gateway
+      - "18790:18790"  # Open Claw Bridge
+    environment:
+      # Gateway Configuration
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_BRIDGE_PORT=18790
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-marketsense-gateway-token}
+      
+      # AI Provider Configuration
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      
+      # MarketSense Integration
+      - MARKETSENSE_NEO4J_URI=bolt://marketsense-neo4j:7687
+      - MARKETSENSE_NEO4J_USER=${NEO4J_USERNAME:-neo4j}
+      - MARKETSENSE_NEO4J_PASSWORD=${NEO4J_PASSWORD:-marketsense123}
+      
+      # Chat Service Integration
+      - MARKETSENSE_CHAT_URL=http://marketsense-chat:3000
+      - MARKETSENSE_WEB_URL=http://marketsense-web:3000
+      
+      # Messaging Platform Integration (optional)
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - SLACK_TOKEN=${SLACK_TOKEN}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      
+      # Workspace Configuration
+      - OPENCLAW_WORKSPACE_PATH=/app/workspace
+      - OPENCLAW_CONFIG_PATH=/app/config
+      
+    volumes:
+      # Open Claw configuration and memory
+      - openclaw_config:/app/config
+      - openclaw_workspace:/app/workspace
+      - openclaw_memory:/app/memory
+      
+      # MarketSense integration volumes
+      - ./openclaw-integration:/app/marketsense-integration
+      
+      # Shared data with other MarketSense services
+      - marketsense_shared_data:/app/shared-data
+      
+    networks:
+      - marketsense-network
+      
+    restart: unless-stopped
+    
+    depends_on:
+      - openclaw-redis
+      
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis for Open Claw session management and caching
+  openclaw-redis:
+    image: redis:7.2-alpine
+    container_name: marketsense-openclaw-redis
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - openclaw_redis_data:/data
+    networks:
+      - marketsense-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    
+  # MarketSense Integration Service
+  openclaw-integration:
+    build:
+      context: ./openclaw-integration
+      dockerfile: Dockerfile
+    container_name: marketsense-openclaw-integration
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - OPENCLAW_GATEWAY_URL=http://openclaw:18789
+      - NEO4J_URI=bolt://marketsense-neo4j:7687
+      - NEO4J_USERNAME=${NEO4J_USERNAME:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-marketsense123}
+      - REDIS_URL=redis://openclaw-redis:6379
+    volumes:
+      - ./openclaw-integration:/app
+      - /app/node_modules
+    networks:
+      - marketsense-network
+    restart: unless-stopped
+    depends_on:
+      - openclaw
+      - openclaw-redis
+
+# Volumes for persistent data
+volumes:
+  openclaw_config:
+    driver: local
+  openclaw_workspace:
+    driver: local
+  openclaw_memory:
+    driver: local
+  openclaw_redis_data:
+    driver: local
+  marketsense_shared_data:
+    driver: local
+
+# Network for MarketSense services communication
+networks:
+  marketsense-network:
+    external: true  # Assumes this network exists from other MarketSense services

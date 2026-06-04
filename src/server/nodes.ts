@@ -5,6 +5,9 @@ import { v4 as uuid } from 'uuid';
 import { globalWorkflow } from './workflow';
 import { EventEnvelope, AnyEvent, createInvokeContext } from './types';
 
+// Very small in-memory conversation store (standalone chat mode)
+const conversationMemory = new Map<string, BaseMessage[]>();
+
 // Define the State
 export const GraphState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -161,14 +164,28 @@ export class ChatAssistant {
     globalWorkflow.getTopic('user_input').publish(userEvent);
 
     // 2. Invoke the LangGraph
-    await graph.invoke({
-      messages: [new HumanMessage(text)],
+    const prior = conversationMemory.get(context.conversationId) ?? [];
+    const inputMessages = [...prior, new HumanMessage(text)];
+
+    const result = await graph.invoke({
+      messages: inputMessages,
       userId,
       conversationId: context.conversationId,
       anthropicKey,
     });
 
-    return userEvent;
+    const finalMessages = (result as unknown as { messages?: BaseMessage[] }).messages ?? inputMessages;
+    conversationMemory.set(context.conversationId, finalMessages.slice(-50)); // keep last N
+
+    const last = finalMessages[finalMessages.length - 1];
+    const reply =
+      last instanceof AIMessage
+        ? last.content.toString()
+        : typeof (last as any)?.content === 'string'
+          ? (last as any).content
+          : undefined;
+
+    return { event: userEvent, reply, conversationId: context.conversationId };
   }
 }
 

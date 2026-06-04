@@ -11,6 +11,11 @@ export interface InvokeContext {
   userId: string;
 }
 
+export interface User {
+  id: string;
+  name: string;
+}
+
 export type EventType =
   | 'chat.user'
   | 'chat.agent'
@@ -20,6 +25,7 @@ export type EventType =
   | 'tool.result'
   | 'webhook.email'
   | 'webhook.notion'
+  | 'webhook.notion.verification'
   | 'webhook.sms'
   | 'file.uploaded'
   | 'error';

@@ -1,10 +1,10 @@
 import React from 'react';
-import ChatInterface from './components/ChatInterface';
+import StandaloneChat from './components/StandaloneChat';
 
 function App() {
   return (
     <div className="w-full h-screen">
-      <ChatInterface />
+      <StandaloneChat />
     </div>
   );
 }

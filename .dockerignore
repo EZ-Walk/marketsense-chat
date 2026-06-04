@@ -1,0 +1,10 @@
+node_modules
+.git
+.env*
+dist
+.next
+coverage
+*.log
+.DS_Store
+**/__pycache__
+**/*.pyc
